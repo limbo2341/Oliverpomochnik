@@ -58,7 +58,7 @@ async def features(message: Message):
 async def about(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await message.answer("🤖 Oliver v1.0\nAI: Groq (Llama 3)\nТригер: .Oliver")
+    await message.answer("🤖 Oliver v1.0\nAI: Groq (Llama 3.3)\nТригер: .Oliver")
 
 @dp.message(F.text == "💬 Підтримка")
 async def support(message: Message):
@@ -66,11 +66,7 @@ async def support(message: Message):
         return
     await message.answer("💬 Підтримка: @katanaxu")
 
-@dp.message(F.text.startswith(".Oliver"))
-async def handle_oliver(message: Message):
-    if message.from_user.id not in ALLOWED_USERS:
-        await message.reply("❌ Ви не додані в список.\nПишіть @katanaxu")
-        return
+async def process_oliver(message: Message):
     prompt = message.text[len(".Oliver"):].strip()
     if not prompt:
         await message.reply("❓ Напиши що зробити після .Oliver")
@@ -86,6 +82,16 @@ async def handle_oliver(message: Message):
         await message.reply(response.choices[0].message.content)
     except Exception as e:
         await message.reply(f"⚠️ Помилка: {str(e)}")
+
+@dp.message(F.text.startswith(".Oliver"))
+async def handle_oliver(message: Message):
+    if message.business_connection_id:
+        await process_oliver(message)
+        return
+    if message.from_user.id not in ALLOWED_USERS:
+        await message.reply("❌ Ви не додані в список.\nПишіть @katanaxu")
+        return
+    await process_oliver(message)
 
 async def main():
     await dp.start_polling(bot, allowed_updates=["message", "business_message"])
