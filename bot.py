@@ -27,17 +27,13 @@ def get_keyboard():
 @dp.message(CommandStart())
 async def start(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
-        await message.answer("❌ Ви не додані в список.\nПишіть @katanaxu")
+        await message.answer("❌ Немає доступу.\nПишіть @katanaxu")
         return
     await message.answer(
         "👋 Привіт! Я <b>Oliver</b> — твій AI-асистент!\n\n"
         "⚡ <b>Як користуватись:</b>\n"
         "В будь-якому чаті напиши:\n"
-        "<code>.Oliver [твій запит]</code>\n\n"
-        "📌 <b>Приклади:</b>\n"
-        "• <code>.Oliver дай відповідь на це</code>\n"
-        "• <code>.Oliver переклади на англійську: текст</code>\n"
-        "• <code>.Oliver напиши вибачення другу</code>",
+        "<code>.Oliver [твій запит]</code>",
         parse_mode="HTML",
         reply_markup=get_keyboard()
     )
@@ -89,7 +85,7 @@ async def handle_oliver(message: Message):
         await process_oliver(message)
         return
     if message.from_user.id not in ALLOWED_USERS:
-        await message.reply("❌ Ви не додані в список.\nПишіть @katanaxu")
+        await message.reply("❌ Немає доступу.\nПишіть @katanaxu")
         return
     await process_oliver(message)
 
