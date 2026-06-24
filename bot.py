@@ -8,7 +8,7 @@ from groq import AsyncGroq
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-ALLOWED_USERS = {8909320142, 7245932902, 8528807150}
+ALLOWED_USERS = {8909320142, 7245932902}
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
