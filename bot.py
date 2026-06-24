@@ -1,6 +1,6 @@
 import asyncio
 import os
-import aiosqlite
+import asyncpg
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BusinessConnection
 from aiogram.filters import CommandStart
@@ -8,39 +8,39 @@ from groq import AsyncGroq
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+DATABASE_URL = os.getenv("DATABASE_URL")
 ALLOWED_USERS = {8909320142, 7245932902}
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 client = AsyncGroq(api_key=GROQ_API_KEY)
-DB_PATH = "oliver.db"
+db_pool = None
 
 SYSTEM_PROMPT = "Ти — Oliver, розумний AI-асистент в Telegram. Допомагай з будь-якими завданнями. Відповідай мовою користувача."
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
+    global db_pool
+    db_pool = await asyncpg.create_pool(DATABASE_URL)
+    async with db_pool.acquire() as conn:
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS connections (
-                user_id INTEGER PRIMARY KEY,
-                is_connected INTEGER DEFAULT 0
+                user_id BIGINT PRIMARY KEY,
+                is_connected BOOLEAN DEFAULT FALSE
             )
         """)
-        await db.commit()
 
 async def set_connected(user_id: int, status: bool):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
+    async with db_pool.acquire() as conn:
+        await conn.execute("""
             INSERT INTO connections (user_id, is_connected)
-            VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET is_connected=?
-        """, (user_id, int(status), int(status)))
-        await db.commit()
+            VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET is_connected=$2
+        """, user_id, status)
 
 async def is_connected(user_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT is_connected FROM connections WHERE user_id=?", (user_id,)) as cur:
-            row = await cur.fetchone()
-            return bool(row and row[0])
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT is_connected FROM connections WHERE user_id=$1", user_id)
+        return bool(row and row["is_connected"])
 
 def get_keyboard():
     return ReplyKeyboardMarkup(
