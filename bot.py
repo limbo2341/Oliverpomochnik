@@ -178,7 +178,7 @@ async def process_oliver(message: Message):
             business_connection_id=message.business_connection_id
         )
 
-@dp.business_message(F.text.startswith(".Oliver"))
+@dp.business_message(F.text.startswith(".Oliver"), F.from_user.id.in_(ALLOWED_USERS))
 async def handle_oliver_business(message: Message):
     await process_oliver(message)
 
