@@ -9,6 +9,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 ALLOWED_USERS = {8909320142, 7245932902}
 
+# Зберігаємо підключених користувачів
+connected_users = set()
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 client = AsyncGroq(api_key=GROQ_API_KEY)
@@ -19,7 +22,8 @@ def get_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🤖 Як користуватись"), KeyboardButton(text="📋 Функції")],
-            [KeyboardButton(text="ℹ️ Про Oliver"), KeyboardButton(text="💬 Підтримка")]
+            [KeyboardButton(text="ℹ️ Про Oliver"), KeyboardButton(text="💬 Підтримка")],
+            [KeyboardButton(text="🔌 Як підключити")]
         ],
         resize_keyboard=True
     )
@@ -27,14 +31,23 @@ def get_keyboard():
 @dp.business_connection()
 async def on_business_connect(bc: BusinessConnection):
     if bc.is_enabled:
-        await bot.send_message(
-            bc.user.id,
-            "✅ <b>Oliver підключений!</b>\n\n"
-            "Тепер я буду відповідати у ваших чатах.\n"
-            "Пишіть <code>.Oliver [запит]</code> в будь-якому чаті!",
-            parse_mode="HTML"
-        )
+        connected_users.add(bc.user.id)
+        if bc.user.id in ALLOWED_USERS:
+            await bot.send_message(
+                bc.user.id,
+                "✅ <b>Oliver підключений!</b>\n\n"
+                "Тепер пишіть <code>.Oliver [запит]</code> в будь-якому чаті!",
+                parse_mode="HTML"
+            )
+        else:
+            await bot.send_message(
+                bc.user.id,
+                "⚠️ <b>Oliver підключений, але у вас немає доступу.</b>\n\n"
+                "Для отримання доступу зверніться до @katanaxu",
+                parse_mode="HTML"
+            )
     else:
+        connected_users.discard(bc.user.id)
         await bot.send_message(
             bc.user.id,
             "❌ <b>Oliver відключений</b>\n\n"
@@ -73,6 +86,25 @@ async def start(message: Message):
         reply_markup=get_keyboard()
     )
 
+@dp.message(F.text == "🔌 Як підключити")
+async def how_to_connect(message: Message):
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+    await message.answer(
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "🔌 <b>Як підключити Oliver:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Відкрий <b>Налаштування</b> Telegram\n"
+        "2️⃣ Перейди в <b>Telegram Business</b>\n"
+        "3️⃣ Натисни <b>Автоматизація чатів</b>\n"
+        "4️⃣ Вибери <b>@OliverpomoschikAI_Bot</b>\n"
+        "5️⃣ Вибери чати до яких бот має доступ\n"
+        "6️⃣ Натисни <b>Зберегти</b>\n\n"
+        "✅ Після підключення Oliver напише тобі підтвердження!\n\n"
+        "⚡ Потім пиши <code>.Oliver [запит]</code> в будь-якому чаті!",
+        parse_mode="HTML"
+    )
+
 @dp.message(F.text == "🤖 Як користуватись")
 async def how_to(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
@@ -84,7 +116,7 @@ async def how_to(message: Message):
         "В будь-якому чаті напиши:\n"
         "<code>.Oliver [твій запит]</code>\n\n"
         "📌 <b>Приклади:</b>\n"
-        "• <code>.Oliver дай відповідь на це повідомлення</code>\n"
+        "• <code>.Oliver дай відповідь на це</code>\n"
         "• <code>.Oliver переклади на англійську: текст</code>\n"
         "• <code>.Oliver напиши привітання з ДР</code>\n"
         "• <code>.Oliver поясни що таке блокчейн</code>\n\n"
@@ -100,18 +132,12 @@ async def features(message: Message):
         "━━━━━━━━━━━━━━━━━━━\n"
         "🛠 <b>Що вміє Oliver:</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n\n"
-        "💬 <b>Чати:</b>\n"
-        "• Відповіді на повідомлення\n"
-        "• Написання будь-яких текстів\n\n"
-        "🌐 <b>Мови:</b>\n"
-        "• Переклад на будь-яку мову\n"
-        "• Виправлення граматики\n\n"
-        "🧠 <b>Знання:</b>\n"
-        "• Пояснення будь-яких тем\n"
-        "• Математика і логіка\n\n"
-        "✍️ <b>Творчість:</b>\n"
-        "• Генерація ідей та жартів\n"
-        "• Написання постів і листів\n\n"
+        "💬 Відповіді на повідомлення\n"
+        "🌐 Переклад на будь-яку мову\n"
+        "✍️ Написання постів і листів\n"
+        "🧠 Пояснення будь-яких тем\n"
+        "🔢 Математика і логіка\n"
+        "💡 Генерація ідей та жартів\n\n"
         "⚡ І багато іншого!",
         parse_mode="HTML"
     )
@@ -178,8 +204,25 @@ async def process_oliver(message: Message):
             business_connection_id=message.business_connection_id
         )
 
-@dp.business_message(F.text.startswith(".Oliver"), F.from_user.id.in_(ALLOWED_USERS))
+@dp.business_message(F.text.startswith(".Oliver"))
 async def handle_oliver_business(message: Message):
+    user_id = message.from_user.id
+    if user_id not in ALLOWED_USERS:
+        await bot.send_message(
+            message.chat.id,
+            "❌ У вас немає доступу до Oliver.\n"
+            "Для отримання доступу зверніться до @katanaxu",
+            business_connection_id=message.business_connection_id
+        )
+        return
+    if user_id not in connected_users:
+        await bot.send_message(
+            message.chat.id,
+            "⚠️ Oliver не підключений до автоматизації чатів.\n"
+            "Підключіть його в Налаштування → Business → Автоматизація чатів.",
+            business_connection_id=message.business_connection_id
+        )
+        return
     await process_oliver(message)
 
 @dp.message(F.text.startswith(".Oliver"))
