@@ -1,7 +1,7 @@
 import asyncio
 import os
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BusinessConnection
 from aiogram.filters import CommandStart
 from groq import AsyncGroq
 
@@ -24,16 +24,51 @@ def get_keyboard():
         resize_keyboard=True
     )
 
+@dp.business_connection()
+async def on_business_connect(bc: BusinessConnection):
+    if bc.is_enabled:
+        await bot.send_message(
+            bc.user.id,
+            "✅ <b>Oliver підключений!</b>\n\n"
+            "Тепер я буду відповідати у ваших чатах.\n"
+            "Пишіть <code>.Oliver [запит]</code> в будь-якому чаті!",
+            parse_mode="HTML"
+        )
+    else:
+        await bot.send_message(
+            bc.user.id,
+            "❌ <b>Oliver відключений</b>\n\n"
+            "Ви відключили мене від автоматизації чатів.\n"
+            "Щоб підключити знову — зайдіть в Налаштування → Business → Автоматизація чатів.",
+            parse_mode="HTML"
+        )
+
 @dp.message(CommandStart())
 async def start(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
-        await message.answer("❌ Немає доступу.\nПишіть @katanaxu")
+        await message.answer(
+            "╔═══════════════════╗\n"
+            "║    🤖 <b>OLIVER AI</b>    ║\n"
+            "╚═══════════════════╝\n\n"
+            "❌ У вас немає доступу.\n"
+            "📩 Для додавання: @katanaxu",
+            parse_mode="HTML"
+        )
         return
     await message.answer(
-        "👋 Привіт! Я <b>Oliver</b> — твій AI-асистент!\n\n"
+        "╔═══════════════════╗\n"
+        "║    🤖 <b>OLIVER AI</b>    ║\n"
+        "╚═══════════════════╝\n\n"
+        "👋 Привіт! Я твій особистий AI-асистент!\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
         "⚡ <b>Як користуватись:</b>\n"
-        "В будь-якому чаті напиши:\n"
-        "<code>.Oliver [твій запит]</code>",
+        "Пиши в будь-якому чаті:\n"
+        "<code>.Oliver [твій запит]</code>\n\n"
+        "📌 <b>Приклади:</b>\n"
+        "• <code>.Oliver дай відповідь на це</code>\n"
+        "• <code>.Oliver переклади текст</code>\n"
+        "• <code>.Oliver напиши вибачення</code>\n"
+        "━━━━━━━━━━━━━━━━━━━",
         parse_mode="HTML",
         reply_markup=get_keyboard()
     )
@@ -42,30 +77,86 @@ async def start(message: Message):
 async def how_to(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await message.answer("⚡ Пиши в будь-якому чаті:\n<code>.Oliver [запит]</code>", parse_mode="HTML")
+    await message.answer(
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "⚡ <b>Як користуватись Oliver:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "В будь-якому чаті напиши:\n"
+        "<code>.Oliver [твій запит]</code>\n\n"
+        "📌 <b>Приклади:</b>\n"
+        "• <code>.Oliver дай відповідь на це повідомлення</code>\n"
+        "• <code>.Oliver переклади на англійську: текст</code>\n"
+        "• <code>.Oliver напиши привітання з ДР</code>\n"
+        "• <code>.Oliver поясни що таке блокчейн</code>\n\n"
+        "💡 Можливості необмежені!",
+        parse_mode="HTML"
+    )
 
 @dp.message(F.text == "📋 Функції")
 async def features(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await message.answer("🛠 Oliver вміє все що ти попросиш:\n• Відповідати на повідомлення\n• Перекладати тексти\n• Писати листи, пости\n• Пояснювати теми\n• Генерувати ідеї\n• І багато іншого!")
+    await message.answer(
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "🛠 <b>Що вміє Oliver:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "💬 <b>Чати:</b>\n"
+        "• Відповіді на повідомлення\n"
+        "• Написання будь-яких текстів\n\n"
+        "🌐 <b>Мови:</b>\n"
+        "• Переклад на будь-яку мову\n"
+        "• Виправлення граматики\n\n"
+        "🧠 <b>Знання:</b>\n"
+        "• Пояснення будь-яких тем\n"
+        "• Математика і логіка\n\n"
+        "✍️ <b>Творчість:</b>\n"
+        "• Генерація ідей та жартів\n"
+        "• Написання постів і листів\n\n"
+        "⚡ І багато іншого!",
+        parse_mode="HTML"
+    )
 
 @dp.message(F.text == "ℹ️ Про Oliver")
 async def about(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await message.answer("🤖 Oliver v1.0\nAI: Groq (Llama 3.3)\nТригер: .Oliver")
+    await message.answer(
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "🤖 <b>Oliver AI v1.0</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "⚙️ <b>Технології:</b>\n"
+        "• AI: Groq (Llama 3.3 70B)\n"
+        "• Платформа: Telegram Business\n"
+        "• Тригер: <code>.Oliver</code>\n\n"
+        "🔒 Доступ: тільки авторизовані користувачі",
+        parse_mode="HTML"
+    )
 
 @dp.message(F.text == "💬 Підтримка")
 async def support(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await message.answer("💬 Підтримка: @katanaxu")
+    await message.answer(
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "💬 <b>Підтримка Oliver:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "👤 Адміністратор: @katanaxu\n\n"
+        "📩 Пишіть для:\n"
+        "• Додавання нових користувачів\n"
+        "• Вирішення проблем\n"
+        "• Пропозицій по покращенню",
+        parse_mode="HTML"
+    )
 
 async def process_oliver(message: Message):
     prompt = message.text[len(".Oliver"):].strip()
     if not prompt:
-        await message.reply("❓ Напиши що зробити після .Oliver")
+        await bot.send_message(
+            message.chat.id,
+            "❓ Напиши що зробити після <code>.Oliver</code>",
+            parse_mode="HTML",
+            business_connection_id=message.business_connection_id
+        )
         return
     try:
         response = await client.chat.completions.create(
@@ -75,22 +166,31 @@ async def process_oliver(message: Message):
                 {"role": "user", "content": prompt}
             ]
         )
-        await message.reply(response.choices[0].message.content)
+        await bot.send_message(
+            message.chat.id,
+            response.choices[0].message.content,
+            business_connection_id=message.business_connection_id
+        )
     except Exception as e:
-        await message.reply(f"⚠️ Помилка: {str(e)}")
+        await bot.send_message(
+            message.chat.id,
+            f"⚠️ Помилка: {str(e)}",
+            business_connection_id=message.business_connection_id
+        )
+
+@dp.business_message(F.text.startswith(".Oliver"))
+async def handle_oliver_business(message: Message):
+    await process_oliver(message)
 
 @dp.message(F.text.startswith(".Oliver"))
 async def handle_oliver(message: Message):
-    if message.business_connection_id:
-        await process_oliver(message)
-        return
     if message.from_user.id not in ALLOWED_USERS:
         await message.reply("❌ Немає доступу.\nПишіть @katanaxu")
         return
     await process_oliver(message)
 
 async def main():
-    await dp.start_polling(bot, allowed_updates=["message", "business_message"])
+    await dp.start_polling(bot, allowed_updates=["message", "business_message", "business_connection"])
 
 if __name__ == "__main__":
     asyncio.run(main())
