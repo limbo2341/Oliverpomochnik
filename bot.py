@@ -9,7 +9,7 @@ from groq import AsyncGroq
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ALLOWED_USERS = {8909320142, 7245932902}
+ALLOWED_USERS = {8909320142, 7245932902, 8528807150}
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
