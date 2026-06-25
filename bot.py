@@ -121,7 +121,7 @@ async def process_oliver(message: Message, business_connection_id: str = None):
     if business_connection_id:
         try:
             bc_info = await bot.get_business_connection(business_connection_id)
-            rights = dict(bc_info.rights) if bc_info.rights else {}
+            rights = bc_info.rights
         except Exception as e:
             pass
 
@@ -129,7 +129,7 @@ async def process_oliver(message: Message, business_connection_id: str = None):
 
     # Зміна імені
     if p.startswith("змін ім'я на ") or p.startswith("змін имя на ") or p.startswith("змін name на "):
-        can = rights.get('can_edit_name', False) if rights else False
+        can = getattr(rights, 'can_edit_name', False) if rights else False
         if not can:
             await reply("❌ Немає дозволу змінювати ім'я.\nНалаштування → Business → Автоматизація → Профіль → Змінювати ім'я")
             return
@@ -147,7 +147,7 @@ async def process_oliver(message: Message, business_connection_id: str = None):
 
     # Зміна біо
     if p.startswith("змін біо на ") or p.startswith("змін bio на "):
-        can = rights.get('can_edit_bio', False) if rights else False
+        can = getattr(rights, 'can_edit_bio', False) if rights else False
         if not can:
             await reply("❌ Немає дозволу змінювати біо.")
             return
@@ -163,7 +163,7 @@ async def process_oliver(message: Message, business_connection_id: str = None):
 
     # Зміна username
     if p.startswith("змін юзернейм на ") or p.startswith("змін username на "):
-        can = rights.get('can_edit_username', False) if rights else False
+        can = getattr(rights, 'can_edit_username', False) if rights else False
         if not can:
             await reply("❌ Немає дозволу змінювати username.")
             return
