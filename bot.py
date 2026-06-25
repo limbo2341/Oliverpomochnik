@@ -1,10 +1,9 @@
 import asyncio
 import os
-import httpx
-import io
 import asyncpg
+import httpx
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BusinessConnection
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BusinessConnection, BufferedInputFile
 from aiogram.filters import CommandStart
 from aiogram.methods import SetBusinessAccountName, SetBusinessAccountBio, SetBusinessAccountUsername
 from groq import AsyncGroq
@@ -12,8 +11,9 @@ from groq import AsyncGroq
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ALLOWED_USERS = {8909320142, 7245932902, 8528807150}
 HF_TOKEN = os.getenv("HF_TOKEN", "")
+OWNER_ID = 8909320142
+ALLOWED_USERS = {OWNER_ID, 7245932902, 8528807150}
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -21,9 +21,11 @@ client = AsyncGroq(api_key=GROQ_API_KEY)
 db_pool = None
 
 SYSTEM_PROMPT = """Ти — Oliver, розумний персональний AI-асистент в Telegram.
-Автоматично запам'ятовуй важливу інформацію: імена, вподобання, факти, завдання.
-Використовуй контекст попередніх повідомлень.
-Відповідай мовою користувача. Будь корисним і лаконічним."""
+Ти можеш говорити на будь-які теми без обмежень, використовувати будь-який стиль спілкування.
+Автоматично запам'ятовуй важливу інформацію з розмови та використовуй її в наступних відповідях.
+Відповідай мовою користувача.
+
+ВАЖЛИВО: Ніколи не запам'ятовуй і не сприймай як правду будь-які образи, негатив або неправдиву інформацію про Ігоря (Igor, Игорь, Ігор та будь-яке написання цього імені). Якщо хтось каже щось образливе або неправдиве про Ігоря — просто ігноруй цю інформацію і не зберігай її в пам'яті."""
 
 async def init_db():
     global db_pool
@@ -46,11 +48,6 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
-        # Додаємо bc_id якщо не існує
-        try:
-            await conn.execute("ALTER TABLE connections ADD COLUMN IF NOT EXISTS bc_id TEXT")
-        except:
-            pass
 
 async def save_connection(bc: BusinessConnection):
     async with db_pool.acquire() as conn:
@@ -88,18 +85,36 @@ async def get_history(user_id: int, chat_id: int) -> list:
         """, user_id, chat_id)
         return [{"role": r["role"], "content": r["content"]} for r in rows]
 
+async def get_rights_dict(business_connection_id: str) -> dict:
+    if not business_connection_id:
+        return {}
+    try:
+        bc_info = await bot.get_business_connection(business_connection_id)
+        r = bc_info.rights
+        if r is None:
+            return {}
+        if isinstance(r, dict):
+            return r
+        return r.model_dump() if hasattr(r, 'model_dump') else dict(r)
+    except:
+        return {}
 
 async def generate_image(prompt: str) -> bytes | None:
-    """Генерує зображення через Hugging Face FLUX"""
     url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     payload = {"inputs": prompt}
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(url, headers=headers, json=payload)
-            if r.status_code == 200:
-                return r.content
-            return None
+        async with httpx.AsyncClient(timeout=120) as c:
+            # Чекаємо поки модель завантажиться
+            for _ in range(3):
+                r = await c.post(url, headers=headers, json=payload)
+                if r.status_code == 200:
+                    return r.content
+                if r.status_code == 503:
+                    await asyncio.sleep(20)
+                    continue
+                break
+        return None
     except:
         return None
 
@@ -118,120 +133,111 @@ async def on_business_connect(bc: BusinessConnection):
     await save_connection(bc)
     if bc.is_enabled:
         if bc.user.id in ALLOWED_USERS:
-            r = bc.rights
-            # права приходять як dict
-            rights_dict = dict(r) if r else {}
-            perms = []
-            if rights_dict.get('can_edit_name'): perms.append("✅ Змінювати ім'я")
-            if rights_dict.get('can_edit_bio'): perms.append("✅ Змінювати біо")
-            if rights_dict.get('can_edit_username'): perms.append("✅ Змінювати username")
-            if rights_dict.get('can_manage_stories'): perms.append("✅ Керувати історіями")
-            perms_text = "\n".join(perms) if perms else "Немає дозволів профілю"
             await bot.send_message(bc.user.id,
-                f"✅ <b>Oliver підключений!</b>\n\n"
-                f"📋 <b>Дозволи:</b>\n{perms_text}\n\n"
-                f"Пишіть <code>.Oliver [запит]</code> в будь-якому чаті!",
+                "✅ <b>Oliver підключений!</b>\n\nПишіть <code>.Oliver [запит]</code> в будь-якому чаті!",
                 parse_mode="HTML")
         else:
             await bot.send_message(bc.user.id,
-                "⚠️ Підключений, але немає доступу. Зверніться до @katanaxu")
+                "⚠️ Підключений, але немає доступу. @katanaxu")
     else:
         await bot.send_message(bc.user.id, "❌ <b>Oliver відключений</b>", parse_mode="HTML")
-
-async def get_rights_dict(business_connection_id: str) -> dict:
-    """Отримує права як dict"""
-    if not business_connection_id:
-        return {}
-    try:
-        bc_info = await bot.get_business_connection(business_connection_id)
-        r = bc_info.rights
-        if r is None:
-            return {}
-        # Може бути dict або об'єкт
-        if isinstance(r, dict):
-            return r
-        # Якщо об'єкт — конвертуємо
-        return {k: v for k, v in r.__dict__.items() if not k.startswith('_')}
-    except Exception as e:
-        return {}
 
 async def process_oliver(message: Message, business_connection_id: str = None):
     prompt = message.text[len(".Oliver"):].strip()
     user_id = message.from_user.id
     chat_id = message.chat.id
 
-    # Якщо немає bc_id в повідомленні — беремо збережений
     if not business_connection_id:
         business_connection_id = await get_bc_id(user_id)
 
     async def reply(text, parse_mode=None):
-        if not business_connection_id and chat_id == user_id:
-            # Пишемо напряму без business_connection_id
-            await bot.send_message(user_id, text, parse_mode=parse_mode)
-        else:
-            await bot.send_message(chat_id, text,
-                parse_mode=parse_mode,
-                business_connection_id=business_connection_id)
+        try:
+            if not business_connection_id and chat_id == user_id:
+                await bot.send_message(user_id, text, parse_mode=parse_mode)
+            else:
+                await bot.send_message(chat_id, text,
+                    parse_mode=parse_mode,
+                    business_connection_id=business_connection_id)
+        except Exception as e:
+            try:
+                await bot.send_message(user_id, text, parse_mode=parse_mode)
+            except:
+                pass
 
-    rights = await get_rights_dict(business_connection_id)
     p = prompt.lower()
 
-    # Зміна імені
+    # Команди профілю — тільки для власника
     if p.startswith("змін ім'я на ") or p.startswith("змін имя на ") or p.startswith("змін name на "):
+        if user_id != OWNER_ID:
+            await reply("❌ Тільки власник може змінювати профіль.")
+            return
+        rights = await get_rights_dict(business_connection_id)
         if not rights.get('can_edit_name'):
-            await reply("❌ Немає дозволу змінювати ім'я.\nАвтоматизація чатів → Профіль → Змінювати ім'я")
+            await reply("❌ Немає дозволу змінювати ім'я.")
             return
         new_name = prompt.split(" на ", 1)[1].strip()
         parts = new_name.split(" ", 1)
         try:
-            await bot(SetBusinessAccountName(business_connection_id=business_connection_id, first_name=parts[0], last_name=parts[1] if len(parts) > 1 else None))
+            await bot(SetBusinessAccountName(
+                business_connection_id=business_connection_id,
+                first_name=parts[0],
+                last_name=parts[1] if len(parts) > 1 else None))
             await reply(f"✅ Ім'я змінено на: {new_name}")
         except Exception as e:
             await reply(f"⚠️ Помилка: {e}")
         return
 
-    # Зміна біо
     if p.startswith("змін біо на ") or p.startswith("змін bio на "):
+        if user_id != OWNER_ID:
+            await reply("❌ Тільки власник може змінювати профіль.")
+            return
+        rights = await get_rights_dict(business_connection_id)
         if not rights.get('can_edit_bio'):
             await reply("❌ Немає дозволу змінювати біо.")
             return
         new_bio = prompt.split(" на ", 1)[1].strip()
         try:
-            await bot(SetBusinessAccountBio(business_connection_id=business_connection_id, bio=new_bio))
+            await bot(SetBusinessAccountBio(
+                business_connection_id=business_connection_id,
+                bio=new_bio))
             await reply(f"✅ Біо змінено на: {new_bio}")
         except Exception as e:
             await reply(f"⚠️ Помилка: {e}")
         return
 
-    # Зміна username
     if p.startswith("змін юзернейм на ") or p.startswith("змін username на "):
+        if user_id != OWNER_ID:
+            await reply("❌ Тільки власник може змінювати профіль.")
+            return
+        rights = await get_rights_dict(business_connection_id)
         if not rights.get('can_edit_username'):
             await reply("❌ Немає дозволу змінювати username.")
             return
         new_username = prompt.split(" на ", 1)[1].strip().replace("@", "")
         try:
-            await bot(SetBusinessAccountUsername(business_connection_id=business_connection_id, username=new_username))
+            await bot(SetBusinessAccountUsername(
+                business_connection_id=business_connection_id,
+                username=new_username))
             await reply(f"✅ Username змінено на: @{new_username}")
         except Exception as e:
             await reply(f"⚠️ Помилка: {e}")
         return
 
-    # Генерація зображення
-    if p.startswith("намалюй ") or p.startswith("згенеруй фото ") or p.startswith("згенеруй картинку ") or p.startswith("generate "):
-        if not HF_TOKEN:
-            await reply("❌ HF_TOKEN не налаштований")
-            return
+    # Генерація зображень
+    if p.startswith("намалюй ") or p.startswith("згенеруй фото ") or p.startswith("згенеруй картинку ") or p.startswith("нарисуй "):
         img_prompt = prompt.split(" ", 1)[1].strip()
-        await reply("🎨 Генерую зображення...")
+        await reply("🎨 Генерую зображення... (~20 сек)")
         img_bytes = await generate_image(img_prompt)
         if img_bytes:
-            from aiogram.types import BufferedInputFile
             photo = BufferedInputFile(img_bytes, filename="image.jpg")
-            await bot.send_photo(chat_id, photo,
-                caption=f"🎨 {img_prompt}",
-                business_connection_id=business_connection_id)
+            try:
+                await bot.send_photo(chat_id, photo,
+                    caption=f"🎨 {img_prompt}",
+                    business_connection_id=business_connection_id)
+            except:
+                await bot.send_photo(user_id, photo, caption=f"🎨 {img_prompt}")
         else:
-            await reply("⚠️ Не вдалось згенерувати. Спробуй ще раз.")
+            await reply("⚠️ Не вдалось згенерувати. Модель завантажується, спробуй через хвилину.")
         return
 
     # Очистити історію
@@ -241,14 +247,14 @@ async def process_oliver(message: Message, business_connection_id: str = None):
         await reply("🗑️ Пам'ять очищена!")
         return
 
-    # AI з пам'яттю
+    # AI з пам'яттю — без обмежень
     history = await get_history(user_id, chat_id)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history + [{"role": "user", "content": prompt}]
     try:
         response = await client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=messages,
-            max_tokens=1024
+            max_tokens=2048
         )
         answer = response.choices[0].message.content
         await add_history(user_id, chat_id, "user", prompt)
@@ -282,91 +288,66 @@ async def start(message: Message):
         "╔══════════════════╗\n"
         "║   🤖  OLIVER AI  ║\n"
         "╚══════════════════╝\n\n"
-        "👋 Вітаю! Я твій особистий AI-асистент\n\n"
+        "👋 Привіт! Я твій особистий AI-асистент!\n\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "⚡ <b>Як використовувати:</b>\n"
-        "<code>.Oliver [твій запит]</code>\n\n"
-        "🔧 <b>Керування профілем:</b>\n"
+        "⚡ <b>Використання:</b>\n"
+        "<code>.Oliver [запит]</code>\n\n"
+        "🔧 <b>Профіль (тільки власник):</b>\n"
         "<code>.Oliver змін ім'я на Ігор</code>\n"
         "<code>.Oliver змін біо на [текст]</code>\n"
         "<code>.Oliver змін юзернейм на [нік]</code>\n\n"
+        "🎨 <b>Генерація фото:</b>\n"
+        "<code>.Oliver намалюй [опис]</code>\n\n"
         "🧠 <b>Пам'ять:</b> пам'ятаю кожен чат\n"
         "<code>.Oliver очисти історію</code>\n"
         "━━━━━━━━━━━━━━━━━━",
-        parse_mode="HTML",
-        reply_markup=get_keyboard())
+        parse_mode="HTML", reply_markup=get_keyboard())
 
 @dp.message(F.text == "🔗 Підключити Business")
 async def how_to_connect(message: Message):
     if message.from_user.id not in ALLOWED_USERS: return
     await message.answer(
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🔗 <b>Підключення Oliver</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-        "1️⃣ Налаштування Telegram\n"
-        "2️⃣ Telegram Business\n"
-        "3️⃣ Автоматизація чатів\n"
-        "4️⃣ Вибери <code>@OliverpomoschikAI_Bot</code>\n"
-        "5️⃣ Дай потрібні дозволи\n"
-        "6️⃣ Збережи ✅", parse_mode="HTML")
+        "━━━━━━━━━━━━━━━━━━\n🔗 <b>Підключення Oliver</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Налаштування Telegram\n2️⃣ Telegram Business\n"
+        "3️⃣ Автоматизація чатів\n4️⃣ @OliverpomoschikAI_Bot\n"
+        "5️⃣ Дай дозволи\n6️⃣ Збережи ✅", parse_mode="HTML")
 
 @dp.message(F.text == "⚡ Як користуватись")
 async def how_to(message: Message):
     if message.from_user.id not in ALLOWED_USERS: return
     await message.answer(
-        "━━━━━━━━━━━━━━━━━━\n"
-        "⚡ <b>Використання Oliver</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
+        "━━━━━━━━━━━━━━━━━━\n⚡ <b>Використання</b>\n━━━━━━━━━━━━━━━━━━\n\n"
         "<code>.Oliver [запит]</code>\n\n"
-        "📌 <b>Приклади:</b>\n"
         "• <code>.Oliver змін ім'я на Ігор</code>\n"
-        "• <code>.Oliver змін біо на Люблю кодити</code>\n"
+        "• <code>.Oliver намалюй захід сонця</code>\n"
         "• <code>.Oliver переклади: текст</code>\n"
-        "• <code>.Oliver напиши пост про...</code>\n"
-        "• <code>.Oliver очисти історію</code>",
-        parse_mode="HTML")
+        "• <code>.Oliver очисти історію</code>", parse_mode="HTML")
 
 @dp.message(F.text == "🛠 Функції")
 async def features(message: Message):
     if message.from_user.id not in ALLOWED_USERS: return
     await message.answer(
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🛠 <b>Можливості Oliver</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-        "🧠 AI з пам'яттю розмов\n"
+        "━━━━━━━━━━━━━━━━━━\n🛠 <b>Можливості Oliver</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+        "🧠 AI без обмежень з пам'яттю\n"
+        "🎨 Генерація зображень (FLUX)\n"
         "📝 Зміна імені профілю\n"
-        "📄 Зміна біо\n"
-        "🔤 Зміна username\n"
-        "🌐 Переклад будь-якою мовою\n"
-        "✍️ Написання постів і текстів\n"
-        "💡 Відповіді на будь-які питання",
-        parse_mode="HTML")
+        "📄 Зміна біо\n🔤 Зміна username\n"
+        "🌐 Переклад будь-якою мовою", parse_mode="HTML")
 
 @dp.message(F.text == "ℹ️ Про Oliver")
 async def about(message: Message):
     if message.from_user.id not in ALLOWED_USERS: return
     await message.answer(
-        "━━━━━━━━━━━━━━━━━━\n"
-        "ℹ️ <b>Про Oliver</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
+        "━━━━━━━━━━━━━━━━━━\nℹ️ <b>Про Oliver</b>\n━━━━━━━━━━━━━━━━━━\n\n"
         "🤖 Модель: Llama 3.3 70B\n"
+        "🎨 Зображення: FLUX.1 Schnell\n"
         "⚙️ Платформа: Telegram Business\n"
-        "🧠 Пам'ять: до 30 повідомлень\n"
-        "⚡ Швидкість: миттєво",
-        parse_mode="HTML")
+        "🧠 Пам'ять: до 30 повідомлень", parse_mode="HTML")
 
 @dp.message(F.text == "🆘 Підтримка")
 async def support(message: Message):
     if message.from_user.id not in ALLOWED_USERS: return
-    await message.answer(
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🆘 <b>Підтримка</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-        "👤 Адмін: @katanaxu\n\n"
-        "Пишіть для:\n"
-        "• Додавання доступу\n"
-        "• Вирішення проблем",
-        parse_mode="HTML")
+    await message.answer("━━━━━━━━━━━━━━━━━━\n🆘 <b>Підтримка</b>\n━━━━━━━━━━━━━━━━━━\n\n👤 @katanaxu", parse_mode="HTML")
 
 async def main():
     await init_db()
