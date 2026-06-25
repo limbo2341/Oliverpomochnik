@@ -121,7 +121,7 @@ async def process_oliver(message: Message, business_connection_id: str = None):
     if business_connection_id:
         try:
             bc_info = await bot.get_business_connection(business_connection_id)
-            rights = bc_info.rights
+            rights = dict(bc_info.rights) if bc_info.rights else {}
         except Exception as e:
             pass
 
