@@ -22,27 +22,58 @@ async def init_db():
     global db_pool
     db_pool = await asyncpg.create_pool(DATABASE_URL)
     async with db_pool.acquire() as conn:
+        await conn.execute("DROP TABLE IF EXISTS connections CASCADE")
+        await conn.execute("DROP TABLE IF EXISTS chat_history CASCADE")
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS connections (
+            CREATE TABLE connections (
                 user_id BIGINT PRIMARY KEY,
-                business_connection_id TEXT,
+                bc_id TEXT,
                 is_enabled BOOLEAN DEFAULT FALSE
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE chat_history (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                chat_id BIGINT,
+                role TEXT,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
             )
         """)
 
 async def save_connection(bc: BusinessConnection):
     async with db_pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO connections (user_id, business_connection_id, is_enabled)
+            INSERT INTO connections (user_id, bc_id, is_enabled)
             VALUES ($1, $2, $3)
-            ON CONFLICT (user_id) DO UPDATE SET
-                business_connection_id=$2, is_enabled=$3
+            ON CONFLICT (user_id) DO UPDATE SET bc_id=$2, is_enabled=$3
         """, bc.user.id, bc.id, bc.is_enabled)
 
-async def get_bc_id(user_id: int):
+async def add_history(user_id: int, chat_id: int, role: str, content: str):
     async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT business_connection_id FROM connections WHERE user_id=$1", user_id)
-        return row['business_connection_id'] if row else None
+        await conn.execute("""
+            INSERT INTO chat_history (user_id, chat_id, role, content)
+            VALUES ($1, $2, $3, $4)
+        """, user_id, chat_id, role, content)
+        # Зберігаємо тільки останні 20 повідомлень на чат
+        await conn.execute("""
+            DELETE FROM chat_history WHERE id IN (
+                SELECT id FROM chat_history
+                WHERE user_id=$1 AND chat_id=$2
+                ORDER BY created_at DESC
+                OFFSET 20
+            )
+        """, user_id, chat_id)
+
+async def get_history(user_id: int, chat_id: int) -> list:
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT role, content FROM chat_history
+            WHERE user_id=$1 AND chat_id=$2
+            ORDER BY created_at ASC
+        """, user_id, chat_id)
+        return [{"role": r["role"], "content": r["content"]} for r in rows]
 
 def get_keyboard():
     return ReplyKeyboardMarkup(
@@ -56,18 +87,13 @@ def get_keyboard():
 
 @dp.business_connection()
 async def on_business_connect(bc: BusinessConnection):
-    r = bc.rights
-    # Відправляємо дебаг щоб бачити реальні права
-    if bc.user.id in ALLOWED_USERS:
-        rights_info = f"""
-can_edit_name: {getattr(r, 'can_edit_name', '?')}
-can_edit_bio: {getattr(r, 'can_edit_bio', '?')}
-can_edit_profile_photo: {getattr(r, 'can_edit_profile_photo', '?')}
-can_edit_username: {getattr(r, 'can_edit_username', '?')}
-can_reply: {getattr(r, 'can_reply', '?')}
-"""
-        await bot.send_message(bc.user.id, f"🔍 Дозволи:\n{rights_info}")
     await save_connection(bc)
+    # Показуємо всі поля об'єкта для дебагу
+    if bc.user.id in ALLOWED_USERS:
+        r = bc.rights
+        debug = f"rights type: {type(r)}\nrights value: {r}"
+        await bot.send_message(bc.user.id, f"🔍 DEBUG:\n{debug}")
+
     if bc.is_enabled:
         if bc.user.id in ALLOWED_USERS:
             await bot.send_message(bc.user.id,
@@ -75,20 +101,22 @@ can_reply: {getattr(r, 'can_reply', '?')}
                 parse_mode="HTML")
         else:
             await bot.send_message(bc.user.id,
-                "⚠️ <b>Oliver підключений, але у вас немає доступу.</b>\n\nЗверніться до @katanaxu",
+                "⚠️ Підключений, але немає доступу. Зверніться до @katanaxu",
                 parse_mode="HTML")
     else:
         await bot.send_message(bc.user.id, "❌ <b>Oliver відключений</b>", parse_mode="HTML")
 
 async def process_oliver(message: Message, business_connection_id: str = None):
     prompt = message.text[len(".Oliver"):].strip()
+    user_id = message.from_user.id
+    chat_id = message.chat.id
 
-    async def reply(text, parse_mode="HTML"):
-        await bot.send_message(message.chat.id, text,
+    async def reply(text, parse_mode=None):
+        await bot.send_message(chat_id, text,
             parse_mode=parse_mode,
             business_connection_id=business_connection_id)
 
-    # Отримуємо актуальні права через API
+    # Отримуємо права напряму через API
     rights = None
     if business_connection_id:
         try:
@@ -103,7 +131,7 @@ async def process_oliver(message: Message, business_connection_id: str = None):
     if p.startswith("змін ім'я на ") or p.startswith("змін имя на ") or p.startswith("змін name на "):
         can = getattr(rights, 'can_edit_name', False) if rights else False
         if not can:
-            await reply("❌ Немає дозволу змінювати ім'я.\nДайте дозвіл: Налаштування → Business → Автоматизація → Профіль → Змінювати ім'я")
+            await reply("❌ Немає дозволу змінювати ім'я.\nНалаштування → Business → Автоматизація → Профіль → Змінювати ім'я")
             return
         new_name = prompt.split(" на ", 1)[1].strip()
         parts = new_name.split(" ", 1)
@@ -112,7 +140,7 @@ async def process_oliver(message: Message, business_connection_id: str = None):
                 business_connection_id=business_connection_id,
                 first_name=parts[0],
                 last_name=parts[1] if len(parts) > 1 else None)
-            await reply(f"✅ Ім'я змінено на: <b>{new_name}</b>")
+            await reply(f"✅ Ім'я змінено на: {new_name}")
         except Exception as e:
             await reply(f"⚠️ Помилка: {e}")
         return
@@ -121,14 +149,14 @@ async def process_oliver(message: Message, business_connection_id: str = None):
     if p.startswith("змін біо на ") or p.startswith("змін bio на "):
         can = getattr(rights, 'can_edit_bio', False) if rights else False
         if not can:
-            await reply("❌ Немає дозволу змінювати біо.\nДайте дозвіл: Профіль → Змінювати «Про себе»")
+            await reply("❌ Немає дозволу змінювати біо.")
             return
         new_bio = prompt.split(" на ", 1)[1].strip()
         try:
             await bot.set_business_account_bio(
                 business_connection_id=business_connection_id,
                 bio=new_bio)
-            await reply(f"✅ Біо змінено на: <b>{new_bio}</b>")
+            await reply(f"✅ Біо змінено на: {new_bio}")
         except Exception as e:
             await reply(f"⚠️ Помилка: {e}")
         return
@@ -149,24 +177,35 @@ async def process_oliver(message: Message, business_connection_id: str = None):
             await reply(f"⚠️ Помилка: {e}")
         return
 
-    # AI відповідь
+    # Очистити історію
+    if p in ["очисти історію", "очисти историю", "clear history"]:
+        async with db_pool.acquire() as conn:
+            await conn.execute("DELETE FROM chat_history WHERE user_id=$1 AND chat_id=$2", user_id, chat_id)
+        await reply("🗑️ Історія чату очищена!")
+        return
+
+    # AI відповідь з пам'яттю
+    history = await get_history(user_id, chat_id)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history + [{"role": "user", "content": prompt}]
+
     try:
         response = await client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
-            ]
+            messages=messages,
+            max_tokens=1024
         )
-        await reply(response.choices[0].message.content, parse_mode=None)
+        answer = response.choices[0].message.content
+        await add_history(user_id, chat_id, "user", prompt)
+        await add_history(user_id, chat_id, "assistant", answer)
+        await reply(answer)
     except Exception as e:
-        await reply(f"⚠️ Помилка: {str(e)}", parse_mode=None)
+        await reply(f"⚠️ Помилка: {str(e)}")
 
 @dp.business_message(F.text.startswith(".Oliver"))
 async def handle_oliver_business(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
         await bot.send_message(message.chat.id,
-            "❌ У вас немає доступу до Oliver.\nЗверніться до @katanaxu",
+            "❌ Немає доступу. Зверніться до @katanaxu",
             business_connection_id=message.business_connection_id)
         return
     await process_oliver(message, business_connection_id=message.business_connection_id)
@@ -174,14 +213,14 @@ async def handle_oliver_business(message: Message):
 @dp.message(F.text.startswith(".Oliver"))
 async def handle_oliver(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
-        await message.reply("❌ Немає доступу.\nПишіть @katanaxu")
+        await message.reply("❌ Немає доступу. Пишіть @katanaxu")
         return
     await process_oliver(message)
 
 @dp.message(CommandStart())
 async def start(message: Message):
     if message.from_user.id not in ALLOWED_USERS:
-        await message.answer("❌ У вас немає доступу.\n📩 Для додавання: @katanaxu")
+        await message.answer("❌ Немає доступу.\n📩 @katanaxu")
         return
     await message.answer(
         "🤖 <b>OLIVER AI</b>\n\n"
@@ -191,9 +230,10 @@ async def start(message: Message):
         "🔧 <b>Команди профілю:</b>\n"
         "<code>.Oliver змін ім'я на Ігор</code>\n"
         "<code>.Oliver змін біо на [текст]</code>\n"
-        "<code>.Oliver змін юзернейм на [username]</code>",
-        parse_mode="HTML",
-        reply_markup=get_keyboard())
+        "<code>.Oliver змін юзернейм на [username]</code>\n\n"
+        "🧠 <b>Пам'ять:</b> Oliver пам'ятає розмову в кожному чаті\n"
+        "<code>.Oliver очисти історію</code> — скинути пам'ять",
+        parse_mode="HTML", reply_markup=get_keyboard())
 
 @dp.message(F.text == "🔗 Як підключити")
 async def how_to_connect(message: Message):
@@ -209,11 +249,12 @@ async def how_to(message: Message):
     if message.from_user.id not in ALLOWED_USERS: return
     await message.answer(
         "⚡ <b>Як користуватись Oliver:</b>\n\n"
-        "<code>.Oliver [твій запит]</code>\n\n"
+        "<code>.Oliver [запит]</code>\n\n"
         "📌 <b>Приклади:</b>\n"
         "• <code>.Oliver змін ім'я на Ігор</code>\n"
         "• <code>.Oliver змін біо на Люблю кодити</code>\n"
-        "• <code>.Oliver переклади на англійську: текст</code>",
+        "• <code>.Oliver переклади: текст</code>\n"
+        "• <code>.Oliver очисти історію</code>",
         parse_mode="HTML")
 
 @dp.message(F.text == "📋 Функції")
@@ -221,19 +262,22 @@ async def features(message: Message):
     if message.from_user.id not in ALLOWED_USERS: return
     await message.answer(
         "🛠 <b>Що вміє Oliver:</b>\n\n"
-        "💬 AI відповіді\n📝 Зміна імені\n"
-        "📄 Зміна біо\n🔤 Зміна username\n"
-        "🌐 Переклад текстів", parse_mode="HTML")
+        "💬 AI відповіді з пам'яттю\n"
+        "📝 Зміна імені профілю\n"
+        "📄 Зміна біо\n"
+        "🔤 Зміна username\n"
+        "🌐 Переклад текстів\n"
+        "🧠 Пам'ятає контекст розмови", parse_mode="HTML")
 
 @dp.message(F.text == "🖥️ Про Oliver")
 async def about(message: Message):
     if message.from_user.id not in ALLOWED_USERS: return
-    await message.answer("🖥️ Oliver — AI-асистент на базі Llama 3.3 70B через Telegram Business", parse_mode="HTML")
+    await message.answer("🖥️ Oliver — AI-асистент на базі Llama 3.3 70B через Telegram Business")
 
 @dp.message(F.text == "💬 Підтримка")
 async def support(message: Message):
     if message.from_user.id not in ALLOWED_USERS: return
-    await message.answer("💬 Підтримка: @katanaxu", parse_mode="HTML")
+    await message.answer("💬 Підтримка: @katanaxu")
 
 async def main():
     await init_db()
