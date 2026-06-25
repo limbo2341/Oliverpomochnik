@@ -100,11 +100,11 @@ async def get_rights_dict(business_connection_id: str) -> dict:
         return {}
 
 async def generate_image(prompt: str) -> bytes | None:
-    url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+    url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1"
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     payload = {"inputs": prompt}
     try:
-        async with httpx.AsyncClient(timeout=120) as c:
+        async with httpx.AsyncClient(timeout=60) as c:
             # Чекаємо поки модель завантажиться
             for _ in range(3):
                 r = await c.post(url, headers=headers, json=payload)
