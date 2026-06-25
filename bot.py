@@ -1,5 +1,7 @@
 import asyncio
 import os
+import httpx
+import io
 import asyncpg
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BusinessConnection
@@ -10,6 +12,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ALLOWED_USERS = {8909320142, 7245932902, 8528807150}
+HF_TOKEN = os.getenv("HF_TOKEN", "")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -83,6 +86,21 @@ async def get_history(user_id: int, chat_id: int) -> list:
             ORDER BY created_at ASC
         """, user_id, chat_id)
         return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
+async def generate_image(prompt: str) -> bytes | None:
+    """Генерує зображення через Hugging Face FLUX"""
+    url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    payload = {"inputs": prompt}
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(url, headers=headers, json=payload)
+            if r.status_code == 200:
+                return r.content
+            return None
+    except:
+        return None
 
 def get_keyboard():
     return ReplyKeyboardMarkup(
@@ -198,6 +216,24 @@ async def process_oliver(message: Message, business_connection_id: str = None):
             await reply(f"✅ Username змінено на: @{new_username}")
         except Exception as e:
             await reply(f"⚠️ Помилка: {e}")
+        return
+
+    # Генерація зображення
+    if p.startswith("намалюй ") or p.startswith("згенеруй фото ") or p.startswith("згенеруй картинку ") or p.startswith("generate "):
+        if not HF_TOKEN:
+            await reply("❌ HF_TOKEN не налаштований")
+            return
+        img_prompt = prompt.split(" ", 1)[1].strip()
+        await reply("🎨 Генерую зображення...")
+        img_bytes = await generate_image(img_prompt)
+        if img_bytes:
+            from aiogram.types import BufferedInputFile
+            photo = BufferedInputFile(img_bytes, filename="image.jpg")
+            await bot.send_photo(chat_id, photo,
+                caption=f"🎨 {img_prompt}",
+                business_connection_id=business_connection_id)
+        else:
+            await reply("⚠️ Не вдалось згенерувати. Спробуй ще раз.")
         return
 
     # Очистити історію
