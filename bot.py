@@ -6,6 +6,7 @@ import asyncpg
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BusinessConnection
 from aiogram.filters import CommandStart
+from aiogram.methods import SetBusinessAccountName, SetBusinessAccountBio, SetBusinessAccountUsername
 from groq import AsyncGroq
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -164,9 +165,13 @@ async def process_oliver(message: Message, business_connection_id: str = None):
         business_connection_id = await get_bc_id(user_id)
 
     async def reply(text, parse_mode=None):
-        await bot.send_message(chat_id, text,
-            parse_mode=parse_mode,
-            business_connection_id=business_connection_id)
+        if not business_connection_id and chat_id == user_id:
+            # Пишемо напряму без business_connection_id
+            await bot.send_message(user_id, text, parse_mode=parse_mode)
+        else:
+            await bot.send_message(chat_id, text,
+                parse_mode=parse_mode,
+                business_connection_id=business_connection_id)
 
     rights = await get_rights_dict(business_connection_id)
     p = prompt.lower()
@@ -179,10 +184,7 @@ async def process_oliver(message: Message, business_connection_id: str = None):
         new_name = prompt.split(" на ", 1)[1].strip()
         parts = new_name.split(" ", 1)
         try:
-            await bot.set_business_account_name(
-                business_connection_id=business_connection_id,
-                first_name=parts[0],
-                last_name=parts[1] if len(parts) > 1 else None)
+            await bot(SetBusinessAccountName(business_connection_id=business_connection_id, first_name=parts[0], last_name=parts[1] if len(parts) > 1 else None))
             await reply(f"✅ Ім'я змінено на: {new_name}")
         except Exception as e:
             await reply(f"⚠️ Помилка: {e}")
@@ -195,9 +197,7 @@ async def process_oliver(message: Message, business_connection_id: str = None):
             return
         new_bio = prompt.split(" на ", 1)[1].strip()
         try:
-            await bot.set_business_account_bio(
-                business_connection_id=business_connection_id,
-                bio=new_bio)
+            await bot(SetBusinessAccountBio(business_connection_id=business_connection_id, bio=new_bio))
             await reply(f"✅ Біо змінено на: {new_bio}")
         except Exception as e:
             await reply(f"⚠️ Помилка: {e}")
@@ -210,9 +210,7 @@ async def process_oliver(message: Message, business_connection_id: str = None):
             return
         new_username = prompt.split(" на ", 1)[1].strip().replace("@", "")
         try:
-            await bot.set_business_account_username(
-                business_connection_id=business_connection_id,
-                username=new_username)
+            await bot(SetBusinessAccountUsername(business_connection_id=business_connection_id, username=new_username))
             await reply(f"✅ Username змінено на: @{new_username}")
         except Exception as e:
             await reply(f"⚠️ Помилка: {e}")
